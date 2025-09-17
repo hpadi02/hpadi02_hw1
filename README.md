@@ -29,6 +29,7 @@ python chat_client.py 127.0.0.1 5000
 ```
 
 When both are running, whatever you type in one terminal (press Enter to send) should appear on the other terminal.
+Per-character streaming is achieved using the termios and tty modules on Linux/macOS, and the msvcrt.getch() function on Windows.
 
 ## Local Testing Tip
 Open two terminals on the same machine:
@@ -44,7 +45,7 @@ This repository contains a working baseline with clear comments in the code. Sug
    - `chat_server.py`: single-client, line-based relay using `selectors`.
    - `chat_client.py`: connects and relays using `selectors`.
 
-2) Per-character streaming
+2) Per-character streaming (completed already)
    - Send data as each keystroke occurs, not only full lines.
    - Use raw terminal mode on Unix (`termios`, `tty`) and disable local echo.
    - Ensure both directions (client and server) handle immediate forwarding.
