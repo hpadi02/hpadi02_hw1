@@ -75,6 +75,7 @@ def run_client(server_ip: str, server_port: int) -> None:
     # register the socket so we know when server sends data
     sel.register(sock, selectors.EVENT_READ, data="server")
 
+    # we will output data immediately as it arrives
     recv_buf = LineBuffer()
 
     # helper: background thread to read stdin and send to server (windows only)
@@ -162,10 +163,9 @@ def run_client(server_ip: str, server_port: int) -> None:
                     if not data:
                         print("[client] server closed connection")
                         return
-                    for line in recv_buf.feed(data):
-                        # print the line to the screen, flushing stdout immediately
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
+                    # print bytes immediately without waiting for newline
+                    sys.stdout.buffer.write(data)
+                    sys.stdout.flush()
                 elif key.data == "stdin" and platform.system() != "Windows":
                     # user typed something (linux/mac only path)
                     # read a single character from stdin

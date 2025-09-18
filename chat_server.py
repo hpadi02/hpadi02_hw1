@@ -115,18 +115,32 @@ def run_server(listen_port: int) -> None:
 
     # decide how to handle stdin based on operating system
     if platform.system() != "Windows":
-        # linux/mac: stdin can be monitored with selectors
+        # linux/mac: set terminal to raw mode and monitor stdin with selectors
         # these modules are only available on Unix
         import os
         import atexit
         import signal
         import termios
         import tty
-        
+
+        old_termios_settings = None
         try:
-            sys.stdin.reconfigure(encoding="utf-8", newline="\n")  # type: ignore
+            # store current terminal settings and switch to raw mode
+            old_termios_settings = termios.tcgetattr(sys.stdin)
+            tty.setraw(sys.stdin.fileno())
+
+            # ensure restoration on exit
+            def restore_termios():
+                try:
+                    if old_termios_settings is not None:
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_termios_settings)
+                except Exception:
+                    pass
+            atexit.register(restore_termios)
         except Exception:
+            # if raw mode fails, continue; we'll still try to read bytes
             pass
+
         sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
     else:
         # windows: stdin not supported by selectors, so use a background thread
@@ -177,19 +191,21 @@ def run_server(listen_port: int) -> None:
 
                 elif key.data == "stdin" and platform.system() != "Windows":
                     # server operator typed something (linux/mac only)
-                    # reads full line before sending
-                    line = sys.stdin.readline()
-                    if line == "":
+                    # read a single byte and forward immediately
+                    import os
+                    char = os.read(sys.stdin.fileno(), 1)
+                    if not char:
                         continue
                     current_client_sock = client_sock_ref[0]
                     if current_client_sock is not None:
                         try:
-                            # full line to client
-                            current_client_sock.sendall(line.encode("utf-8"))
+                            current_client_sock.sendall(char)
                         except Exception:
                             print("[server] failed to send; client likely disconnected")
                     else:
-                        print("[server] no client connected yet")
+                        # echo locally even if no client yet
+                        sys.stdout.buffer.write(char)
+                        sys.stdout.flush()
     except KeyboardInterrupt:
         print("\n[server] shutting down")
     finally:

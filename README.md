@@ -14,18 +14,20 @@ This project implements a baseline networked chat program using Python 3 and sta
 
 ### Start the server
 ```bash
-python chat_server.py LISTEN_PORT
+# use python3 on macOS/Linux
+python3 chat_server.py LISTEN_PORT
 # example
-python chat_server.py 5000
+python3 chat_server.py 5000
 ```
 
 The server waits for a connection on the given port.
 
 ### Start the client
 ```bash
-python chat_client.py SERVER_IP SERVER_PORT
+# use python3 on macOS/Linux
+python3 chat_client.py SERVER_IP SERVER_PORT
 # example (same machine)
-python chat_client.py 127.0.0.1 5000
+python3 chat_client.py 127.0.0.1 5000
 ```
 
 When both are running, whatever you type in one terminal (press Enter to send) should appear on the other terminal.
@@ -33,10 +35,34 @@ Per-character streaming is achieved using the termios and tty modules on Linux/m
 
 ## Local Testing Tip
 Open two terminals on the same machine:
-- Terminal A: `python chat_server.py 5000`
-- Terminal B: `python chat_client.py 127.0.0.1 5000`
+- Terminal A: `python3 chat_server.py 5000`
+- Terminal B: `python3 chat_client.py 127.0.0.1 5000`
 
 Type in either window and press Enter. Lines appear on the other side.
+
+## Run on two computers (same network)
+
+1. On the server computer, find its LAN IP:
+   - macOS (Wi‑Fi): `ipconfig getifaddr en0`
+   - macOS (Ethernet): `ipconfig getifaddr en1`
+   - Windows: `ipconfig` → look for IPv4 Address
+   - Linux: `hostname -I`
+
+2. Start the server on a free port (example 5050):
+```bash
+python3 chat_server.py 5050
+```
+
+3. On the client computer, connect using the server's IP and same port:
+```bash
+python3 chat_client.py <SERVER_IP> 5050
+```
+
+4. If it doesn't connect:
+- Ensure both devices are on the same Wi‑Fi/subnet
+- Allow "python" through the OS firewall
+- Try another high port (e.g., 5051)
+- Test reachability: `ping <SERVER_IP>` or `nc -vz <SERVER_IP> 5050`
 
 ## Tasks
 This repository contains a working baseline with clear comments in the code. Suggested split across four members:
@@ -60,11 +86,7 @@ This repository contains a working baseline with clear comments in the code. Sug
    - Add `/quit` command on server stdin to close all clients and exit.
    - Improve UX messages, and document manual test checklist.
 
-## Submission Packaging
-Per assignment instructions (Python path):
-- Include `.py` files and `README.md` with run instructions.
-- No external packages; standard library only.
-- Zip the directory and upload as required.
+
 
 ## Manual Test Checklist
 - Start server, then client; verify connection message.
