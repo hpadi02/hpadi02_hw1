@@ -20,11 +20,15 @@ import platform
 from typing import Tuple, Optional
 
 
-def parse_args() -> Tuple[str, int]:
-    """parse server ip and port from command line"""
-    if len(sys.argv) != 3:
-        print("usage: python chat_client.py SERVER_IP SERVER_PORT", file=sys.stderr)
+def parse_args() -> Tuple[str, int, str]:
+    """parse server ip, port, and mode from command line"""
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        print("usage: python chat_client.py SERVER_IP SERVER_PORT [--line|--char]", file=sys.stderr)
+        print("  --line: line-based mode (press Enter to send) - baseline requirement", file=sys.stderr)
+        print("  --char: per-character mode (send as you type) - advanced requirement", file=sys.stderr)
+        print("  default: --char", file=sys.stderr)
         sys.exit(1)
+    
     server_ip = sys.argv[1]
     try:
         server_port = int(sys.argv[2])
@@ -33,7 +37,19 @@ def parse_args() -> Tuple[str, int]:
     except ValueError:
         print("server_port must be an integer between 1 and 65535", file=sys.stderr)
         sys.exit(1)
-    return server_ip, server_port
+    
+    # Parse mode (default to char mode)
+    mode = "char"
+    if len(sys.argv) == 4:
+        if sys.argv[3] == "--line":
+            mode = "line"
+        elif sys.argv[3] == "--char":
+            mode = "char"
+        else:
+            print("invalid mode. use --line or --char", file=sys.stderr)
+            sys.exit(1)
+    
+    return server_ip, server_port, mode
 
 
 class LineBuffer:
@@ -61,7 +77,7 @@ class LineBuffer:
         return lines
 
 
-def run_client(server_ip: str, server_port: int) -> None:
+def run_client(server_ip: str, server_port: int, mode: str) -> None:
     """main loop for the chat client"""
     sel = selectors.DefaultSelector()
 
@@ -112,43 +128,47 @@ def run_client(server_ip: str, server_port: int) -> None:
                 print("[client] failed to send; server disconnected?")
                 return
 
-    # decide how to handle stdin
-    # Unix systems (Linux/macOS)
-    if platform.system() != "Windows":
-        # these modules are only available on Unix
-        import termios
-        import tty
-        import atexit
-        import os
-        import signal
+    # decide how to handle stdin based on mode and operating system
+    if mode == "char":
+        # Per-character mode: use raw terminal
+        if platform.system() != "Windows":
+            # these modules are only available on Unix
+            import termios
+            import tty
+            import atexit
+            import os
+            import signal
 
-        old_termios_settings: Optional[list] = None
-        try:
-            # get current terminal settings to restore them on exit
-            old_termios_settings = termios.tcgetattr(sys.stdin)
-            # put terminal in raw mode: read char-by-char, no local echo
-            tty.setraw(sys.stdin.fileno())
+            old_termios_settings: Optional[list] = None
+            try:
+                # get current terminal settings to restore them on exit
+                old_termios_settings = termios.tcgetattr(sys.stdin)
+                # put terminal in raw mode: read char-by-char, no local echo
+                tty.setraw(sys.stdin.fileno())
 
-            # ensure settings are restored even if the program crashes
-            def restore_termios():
-                if old_termios_settings:
-                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_termios_settings)
-                    sys.stderr.write("\r\nrestored terminal settings.\r\n")
-            atexit.register(restore_termios)
+                # ensure settings are restored even if the program crashes
+                def restore_termios():
+                    if old_termios_settings:
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_termios_settings)
+                        sys.stderr.write("\r\nrestored terminal settings.\r\n")
+                atexit.register(restore_termios)
 
-            # in raw mode, Ctrl+C needs to be handled manually
-            def signal_handler(sig, frame):
-                sys.exit(0)
-            signal.signal(signal.SIGINT, signal_handler)
+                # in raw mode, Ctrl+C needs to be handled manually
+                def signal_handler(sig, frame):
+                    sys.exit(0)
+                signal.signal(signal.SIGINT, signal_handler)
 
-        except Exception as e:
-            print(f"[client] failed to set raw terminal mode: {e}", file=sys.stderr)
-            pass
-        sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
-    # Windows
+            except Exception as e:
+                print(f"[client] failed to set raw terminal mode: {e}", file=sys.stderr)
+                pass
+            sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
+        # Windows
+        else:
+            # stdin not supported by selectors, so use a background thread
+            threading.Thread(target=stdin_loop, daemon=True).start()
     else:
-        # stdin not supported by selectors, so use a background thread
-        threading.Thread(target=stdin_loop, daemon=True).start()
+        # Line-based mode: use normal terminal
+        sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
 
     # main event loop
     try:
@@ -163,21 +183,41 @@ def run_client(server_ip: str, server_port: int) -> None:
                     if not data:
                         print("[client] server closed connection")
                         return
-                    # print bytes immediately without waiting for newline
-                    sys.stdout.buffer.write(data)
-                    sys.stdout.flush()
-                elif key.data == "stdin" and platform.system() != "Windows":
-                    # user typed something (linux/mac only path)
-                    # read a single character from stdin
-                    char = os.read(sys.stdin.fileno(), 1)
-                    if not char:
-                        continue
-                    try:
-                        # send the character immediately
-                        sock.sendall(char)
-                    except Exception:
-                        print("[client] failed to send; server disconnected?")
-                        return
+                    
+                    if mode == "char":
+                        # Per-character mode: print bytes immediately without waiting for newline
+                        sys.stdout.buffer.write(data)
+                        sys.stdout.flush()
+                    else:
+                        # Line-based mode: use line buffer to handle complete lines
+                        for line in recv_buf.feed(data):
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                            
+                elif key.data == "stdin":
+                    # user typed something
+                    if mode == "char" and platform.system() != "Windows":
+                        # Per-character mode (Unix/macOS): read single character from stdin
+                        import os
+                        char = os.read(sys.stdin.fileno(), 1)
+                        if not char:
+                            continue
+                        try:
+                            # send the character immediately
+                            sock.sendall(char)
+                        except Exception:
+                            print("[client] failed to send; server disconnected?")
+                            return
+                    else:
+                        # Line-based mode: read full line and send
+                        line = sys.stdin.readline()
+                        if line == "":
+                            continue
+                        try:
+                            sock.sendall(line.encode("utf-8"))
+                        except Exception:
+                            print("[client] failed to send; server disconnected?")
+                            return
     except KeyboardInterrupt:
         print("\n[client] exiting")
     finally:
@@ -190,5 +230,6 @@ def run_client(server_ip: str, server_port: int) -> None:
 
 
 if __name__ == "__main__":
-    ip, port = parse_args()
-    run_client(ip, port)
+    ip, port, mode = parse_args()
+    print(f"[client] starting in {mode} mode")
+    run_client(ip, port, mode)

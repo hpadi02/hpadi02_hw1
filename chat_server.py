@@ -26,22 +26,38 @@ import platform
 from typing import Optional
 
 
-def parse_args() -> int:
+def parse_args() -> tuple[int, str]:
     """
-    read the port number from command line arguments.
+    read the port number and mode from command line arguments.
     exits with error message if input is missing or invalid.
     """
-    if len(sys.argv) != 2:
-        print("usage: python chat_server.py LISTEN_PORT", file=sys.stderr)
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("usage: python chat_server.py LISTEN_PORT [--line|--char]", file=sys.stderr)
+        print("  --line: line-based mode (press Enter to send) - baseline requirement", file=sys.stderr)
+        print("  --char: per-character mode (send as you type) - advanced requirement", file=sys.stderr)
+        print("  default: --char", file=sys.stderr)
         sys.exit(1)
+    
     try:
         port = int(sys.argv[1])
         if not (0 < port < 65536):
             raise ValueError
-        return port
     except ValueError:
         print("listen_port must be an integer between 1 and 65535", file=sys.stderr)
         sys.exit(1)
+    
+    # Parse mode (default to char mode)
+    mode = "char"
+    if len(sys.argv) == 3:
+        if sys.argv[2] == "--line":
+            mode = "line"
+        elif sys.argv[2] == "--char":
+            mode = "char"
+        else:
+            print("invalid mode. use --line or --char", file=sys.stderr)
+            sys.exit(1)
+    
+    return port, mode
 
 
 class LineBuffer:
@@ -72,7 +88,7 @@ class LineBuffer:
         return lines
 
 
-def run_server(listen_port: int) -> None:
+def run_server(listen_port: int, mode: str) -> None:
     """main loop for the chat server"""
     sel = selectors.DefaultSelector()
 
@@ -113,39 +129,44 @@ def run_server(listen_port: int) -> None:
                 print("[server] failed to send; client disconnected")
                 return
 
-    # decide how to handle stdin based on operating system
-    if platform.system() != "Windows":
-        # linux/mac: set terminal to raw mode and monitor stdin with selectors
-        # these modules are only available on Unix
-        import os
-        import atexit
-        import signal
-        import termios
-        import tty
+    # decide how to handle stdin based on operating system and mode
+    if mode == "char":
+        # Per-character mode: use raw terminal
+        if platform.system() != "Windows":
+            # linux/mac: set terminal to raw mode and monitor stdin with selectors
+            # these modules are only available on Unix
+            import os
+            import atexit
+            import signal
+            import termios
+            import tty
 
-        old_termios_settings = None
-        try:
-            # store current terminal settings and switch to raw mode
-            old_termios_settings = termios.tcgetattr(sys.stdin)
-            tty.setraw(sys.stdin.fileno())
+            old_termios_settings = None
+            try:
+                # store current terminal settings and switch to raw mode
+                old_termios_settings = termios.tcgetattr(sys.stdin)
+                tty.setraw(sys.stdin.fileno())
 
-            # ensure restoration on exit
-            def restore_termios():
-                try:
-                    if old_termios_settings is not None:
-                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_termios_settings)
-                except Exception:
-                    pass
-            atexit.register(restore_termios)
-        except Exception:
-            # if raw mode fails, continue; we'll still try to read bytes
-            pass
+                # ensure restoration on exit
+                def restore_termios():
+                    try:
+                        if old_termios_settings is not None:
+                            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_termios_settings)
+                    except Exception:
+                        pass
+                atexit.register(restore_termios)
+            except Exception:
+                # if raw mode fails, continue; we'll still try to read bytes
+                pass
 
-        sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
+            sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
+        else:
+            # windows: stdin not supported by selectors, so use a background thread
+            # Pass the mutable list to the thread
+            threading.Thread(target=stdin_loop, args=(client_sock_ref,), daemon=True).start()
     else:
-        # windows: stdin not supported by selectors, so use a background thread
-        # Pass the mutable list to the thread
-        threading.Thread(target=stdin_loop, args=(client_sock_ref,), daemon=True).start()
+        # Line-based mode: use normal terminal
+        sel.register(sys.stdin, selectors.EVENT_READ, data="stdin")
 
     # main event loop
     try:
@@ -189,23 +210,37 @@ def run_server(listen_port: int) -> None:
                     sys.stdout.buffer.write(data)
                     sys.stdout.flush()
 
-                elif key.data == "stdin" and platform.system() != "Windows":
-                    # server operator typed something (linux/mac only)
-                    # read a single byte and forward immediately
-                    import os
-                    char = os.read(sys.stdin.fileno(), 1)
-                    if not char:
-                        continue
+                elif key.data == "stdin":
+                    # server operator typed something
                     current_client_sock = client_sock_ref[0]
-                    if current_client_sock is not None:
-                        try:
-                            current_client_sock.sendall(char)
-                        except Exception:
-                            print("[server] failed to send; client likely disconnected")
+                    
+                    if mode == "char" and platform.system() != "Windows":
+                        # Per-character mode (Unix/macOS): read single byte and forward immediately
+                        import os
+                        char = os.read(sys.stdin.fileno(), 1)
+                        if not char:
+                            continue
+                        if current_client_sock is not None:
+                            try:
+                                current_client_sock.sendall(char)
+                            except Exception:
+                                print("[server] failed to send; client likely disconnected")
+                        else:
+                            # echo locally even if no client yet
+                            sys.stdout.buffer.write(char)
+                            sys.stdout.flush()
                     else:
-                        # echo locally even if no client yet
-                        sys.stdout.buffer.write(char)
-                        sys.stdout.flush()
+                        # Line-based mode: read full line and send
+                        line = sys.stdin.readline()
+                        if line == "":
+                            continue
+                        if current_client_sock is not None:
+                            try:
+                                current_client_sock.sendall(line.encode("utf-8"))
+                            except Exception:
+                                print("[server] failed to send; client likely disconnected")
+                        else:
+                            print("[server] no client connected yet")
     except KeyboardInterrupt:
         print("\n[server] shutting down")
     finally:
@@ -225,5 +260,6 @@ def run_server(listen_port: int) -> None:
 
 
 if __name__ == "__main__":
-    port_arg = parse_args()
-    run_server(port_arg)
+    port_arg, mode_arg = parse_args()
+    print(f"[server] starting in {mode_arg} mode")
+    run_server(port_arg, mode_arg)

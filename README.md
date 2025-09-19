@@ -1,4 +1,4 @@
-# HPAD I/O Homework 1 — Network Client/Server (Python)
+# HPAD Homework 1 — Network Client/Server (Python)
 
 This project implements a baseline networked chat program using Python 3 and standard library sockets. It includes a simple server and client that communicate over TCP. The baseline satisfies the initial requirement (line-based chat). Additional enhancements are outlined for the rest of the team.
 
@@ -12,11 +12,28 @@ This project implements a baseline networked chat program using Python 3 and sta
 
 ## How to Run (per assignment)
 
+### Two Modes Available
+
+**Line-based mode (baseline requirement):**
+- Press Enter to send each line
+- Normal terminal behavior
+- Good for testing and simple chat
+
+**Per-character mode (advanced requirement):**
+- Characters appear instantly as you type
+- Raw terminal mode (no local echo)
+- Real-time communication
+
 ### Start the server
 ```bash
-# use python3 on macOS/Linux
-python3 chat_server.py LISTEN_PORT
+# Line-based mode (baseline)
+python3 chat_server.py LISTEN_PORT --line
 # example
+python3 chat_server.py 5000 --line
+
+# Per-character mode (advanced) - default
+python3 chat_server.py LISTEN_PORT --char
+# or simply
 python3 chat_server.py 5000
 ```
 
@@ -24,21 +41,40 @@ The server waits for a connection on the given port.
 
 ### Start the client
 ```bash
-# use python3 on macOS/Linux
-python3 chat_client.py SERVER_IP SERVER_PORT
+# Line-based mode (baseline)
+python3 chat_client.py SERVER_IP SERVER_PORT --line
 # example (same machine)
+python3 chat_client.py 127.0.0.1 5000 --line
+
+# Per-character mode (advanced) - default
+python3 chat_client.py SERVER_IP SERVER_PORT --char
+# or simply
 python3 chat_client.py 127.0.0.1 5000
 ```
 
-When both are running, whatever you type in one terminal (press Enter to send) should appear on the other terminal.
-Per-character streaming is achieved using the termios and tty modules on Linux/macOS, and the msvcrt.getch() function on Windows.
+**Important:** Both server and client must use the same mode for proper communication.
 
 ## Local Testing Tip
-Open two terminals on the same machine:
-- Terminal A: `python3 chat_server.py 5000`
-- Terminal B: `python3 chat_client.py 127.0.0.1 5000`
 
+### Line-based mode (easier for testing):
+```bash
+# Terminal A (Server)
+python3 chat_server.py 5000 --line
+
+# Terminal B (Client)
+python3 chat_client.py 127.0.0.1 5000 --line
+```
 Type in either window and press Enter. Lines appear on the other side.
+
+### Per-character mode (advanced):
+```bash
+# Terminal A (Server)
+python3 chat_server.py 5000 --char
+
+# Terminal B (Client)
+python3 chat_client.py 127.0.0.1 5000 --char
+```
+Type in either window. Characters appear instantly on the other side (no Enter needed).
 
 ## Run on two computers (same network)
 
@@ -50,12 +86,20 @@ Type in either window and press Enter. Lines appear on the other side.
 
 2. Start the server on a free port (example 5050):
 ```bash
-python3 chat_server.py 5050
+# Line-based mode (easier for testing)
+python3 chat_server.py 5050 --line
+
+# Per-character mode (advanced)
+python3 chat_server.py 5050 --char
 ```
 
 3. On the client computer, connect using the server's IP and same port:
 ```bash
-python3 chat_client.py <SERVER_IP> 5050
+# Line-based mode (must match server)
+python3 chat_client.py <SERVER_IP> 5050 --line
+
+# Per-character mode (must match server)
+python3 chat_client.py <SERVER_IP> 5050 --char
 ```
 
 4. If it doesn't connect:
